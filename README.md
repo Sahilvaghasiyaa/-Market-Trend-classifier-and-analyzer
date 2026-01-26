@@ -30,12 +30,7 @@ EfficientNetB0: Transfer learning from ImageNet
 Vision Transformer: Custom ViT with 6 transformer layers
 Ensemble: Concatenated features from both models
 
-📋 Requirements
-System Requirements
 
-Python 3.10+
-8GB+ RAM recommended
-GPU optional (model runs fine on CPU)
 
 API Requirements
 
