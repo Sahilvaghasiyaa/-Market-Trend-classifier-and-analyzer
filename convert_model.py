@@ -104,6 +104,7 @@ def build_efficientnet():
     base = EfficientNetB0(
         include_top=False,
         weights="imagenet",
+        
         input_shape=(IMG_SIZE, IMG_SIZE, 3),
         pooling="avg"
     )
