@@ -350,8 +350,7 @@ def perform_hybrid_analysis(image, model):
     ])
     results["trading_consideration"] = gpt_analysis.get("trading_consideration", "wait").upper()
     results["consideration_reasoning"] = gpt_analysis.get("consideration_reasoning", "Further confirmation needed")
-    results["model_bias"] = model_bias
-    results["model_confidence"] = model_confidence
+  
     
     return results
 
