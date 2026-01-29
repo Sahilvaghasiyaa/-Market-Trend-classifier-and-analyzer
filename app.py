@@ -15,18 +15,13 @@ from openai import OpenAI
 # CONFIGURATION
 # ================================
 MODEL_PATH = "ensemble_final_model.keras"
-IMG_SIZE = 224  # CRITICAL: Must match training size
+IMG_SIZE = 224
 
-# ✅ Streamlit Cloud–safe API key
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-
-# OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Model classes (must match training order)
 CLASSES = ["buyinput", "sellinput"]
 
-# Vision Transformer parameters (MUST MATCH TRAINING)
 PATCH_SIZE = 16
 NUM_PATCHES = (IMG_SIZE // PATCH_SIZE) ** 2
 PROJECTION_DIM = 512
@@ -34,7 +29,7 @@ NUM_HEADS = 8
 TRANSFORMER_LAYERS = 6
 
 # ================================
-# CUSTOM LAYERS (FROM TRAINING CODE)
+# CUSTOM LAYERS
 # ================================
 class Patches(layers.Layer):
     def __init__(self, patch_size, **kwargs):
@@ -138,124 +133,130 @@ def build_ensemble():
     return keras.Model(inputs, outputs)
 
 # ================================
-# IMAGE PREPROCESSING
+# PREPROCESSING
 # ================================
 def preprocess_image_for_model(image):
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-
+    if image.mode != "RGB":
+        image = image.convert("RGB")
     image = image.resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
-    img_array = np.array(image).astype("float32") / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    return img_array
+    arr = np.array(image).astype("float32") / 255.0
+    return np.expand_dims(arr, axis=0)
 
 
 def encode_image_to_base64(image):
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    return base64.b64encode(buffered.getvalue()).decode()
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
 # ================================
-# MODEL LOADING
+# MODEL LOADING (FIXED)
 # ================================
 @st.cache_resource
 def load_trained_model():
-    custom_objects = {"Patches": Patches, "PatchEncoder": PatchEncoder}
+    custom_objects = {
+        "Patches": Patches,
+        "PatchEncoder": PatchEncoder
+    }
 
-    if os.path.exists(MODEL_PATH):
+    # Method 1: full .keras
+    if os.path.exists("ensemble_final_model.keras"):
         try:
+            st.info("🔄 Loading full model (.keras)...")
             model = keras.models.load_model(
-                MODEL_PATH,
+                "ensemble_final_model.keras",
                 custom_objects=custom_objects,
                 compile=False
             )
+            st.success("✅ Model loaded (.keras)")
             return model
-        except Exception:
-            pass
+        except Exception as e:
+            st.warning(f"⚠️ .keras load failed: {str(e)[:120]}")
+
+    # Method 2: rebuild + weights
+    for wf in [
+        "ensemble_final_model.weights.h5",
+        "ensemble_final_model_converted.h5"
+    ]:
+        if os.path.exists(wf):
+            try:
+                st.info(f"🔄 Loading weights ({wf})...")
+                model = build_ensemble()
+                model.load_weights(wf)
+                st.success(f"✅ Model loaded from weights: {wf}")
+                return model
+            except Exception as e:
+                st.warning(f"⚠️ Failed {wf}: {str(e)[:120]}")
 
     st.error("❌ Model could not be loaded.")
     return None
 
 # ================================
-# GPT-4 VISION ANALYSIS
+# GPT-4o VISION ANALYSIS
 # ================================
-def analyze_with_gpt4_vision(image, is_trend_check=True):
+def analyze_with_gpt4_vision(image):
     base64_image = encode_image_to_base64(image)
 
-    system_prompt = """You are an expert technical analyst with deep knowledge of price action, candlestick patterns, support/resistance, Fibonacci levels, and market structure. Analyze the candlestick chart image comprehensively and respond strictly in JSON as instructed."""
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Analyze this candlestick chart comprehensively."},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}"
-                            }
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an expert technical analyst."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this candlestick chart comprehensively."},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{base64_image}"
                         }
-                    ]
-                }
-            ],
-            max_tokens=1500,
-            temperature=0.3
-        )
+                    }
+                ]
+            }
+        ],
+        max_tokens=1500,
+        temperature=0.3
+    )
 
-        content = response.choices[0].message.content
+    content = response.choices[0].message.content
+    if "```" in content:
+        content = content.split("```")[1].split("```")[0].strip()
 
-        if "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        return json.loads(content)
-
-    except Exception as e:
-        return {"error": f"API request failed: {str(e)}"}
+    return json.loads(content)
 
 # ================================
 # HYBRID ANALYSIS
 # ================================
 def perform_hybrid_analysis(image, model):
-    gpt_analysis = analyze_with_gpt4_vision(image)
-    if "error" in gpt_analysis:
-        return gpt_analysis
-
-    preprocessed = preprocess_image_for_model(image)
-    prediction = model.predict(preprocessed, verbose=0)
-    predicted_class_idx = np.argmax(prediction[0])
-
-    model_label = CLASSES[predicted_class_idx]
-    model_bias = "Bullish" if model_label == "buyinput" else "Bearish"
-
-    gpt_analysis["model_bias"] = model_bias
-    return gpt_analysis
+    gpt_result = analyze_with_gpt4_vision(image)
+    pre = preprocess_image_for_model(image)
+    pred = model.predict(pre, verbose=0)
+    bias = CLASSES[np.argmax(pred[0])]
+    gpt_result["model_bias"] = "Bullish" if bias == "buyinput" else "Bearish"
+    return gpt_result
 
 # ================================
 # STREAMLIT UI
 # ================================
 def main():
-    st.set_page_config(page_title="AI Chart Analysis", page_icon="📊", layout="wide")
+    st.set_page_config("AI Chart Analysis", "📊", layout="wide")
 
     model = load_trained_model()
     if model is None:
         st.stop()
 
-    uploaded_file = st.file_uploader(
-        "Upload a candlestick chart image",
+    uploaded = st.file_uploader(
+        "Upload candlestick chart",
         type=["png", "jpg", "jpeg", "webp"]
     )
 
-    if uploaded_file:
-        image = Image.open(uploaded_file)
+    if uploaded:
+        image = Image.open(uploaded)
         st.image(image, caption="Uploaded Chart", use_container_width=True)
 
         if st.button("🔬 Analyze Chart", type="primary", use_container_width=True):
-            results = perform_hybrid_analysis(image, model)
-            st.json(results)
+            with st.spinner("Analyzing..."):
+                result = perform_hybrid_analysis(image, model)
+            st.json(result)
 
 
 if __name__ == "__main__":
