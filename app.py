@@ -521,13 +521,7 @@ def main():
             else:
                 st.markdown("### 📈 Analysis Results")
                 
-                # Model Info
-                st.markdown(f"""
-                    <div class="model-info">
-                        <strong>🤖 Model Prediction:</strong> {results['model_bias']} 
-                        (Confidence: {results['model_confidence']:.1f}%)
-                    </div>
-                """, unsafe_allow_html=True)
+                
                 
                 # 1. Trend Direction
                 st.markdown(f"""
